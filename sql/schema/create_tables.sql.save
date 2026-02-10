@@ -1,0 +1,205 @@
+-- ============================================================================
+-- E-Commerce Data Pipeline - Database Schema
+-- ============================================================================
+
+-- Drop existing tables (for clean reinstall)
+SET FOREIGN_KEY_CHECKS = 0;
+
+DROP TABLE IF EXISTS fact_transactions;
+DROP TABLE IF EXISTS fact_customer_behavior;
+DROP TABLE IF EXISTS fact_economic_indicators;
+DROP TABLE IF EXISTS customer_metrics;
+DROP TABLE IF EXISTS dim_customers;
+DROP TABLE IF EXISTS dim_products;
+DROP TABLE IF EXISTS dim_date;
+
+SET FOREIGN_KEY_CHECKS = 1;
+
+-- ============================================================================
+-- DIMENSION TABLES
+-- ============================================================================
+
+-- Customers dimension
+CREATE TABLE dim_customers (
+    customer_key INT AUTO_INCREMENT PRIMARY KEY,
+    customer_id INT UNIQUE NOT NULL,
+    gender VARCHAR(10),
+    age INT,
+    city VARCHAR(50),
+    membership_type VARCHAR(20),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_customer_id (customer_id),
+    INDEX idx_city (city),
+    INDEX idx_membership (membership_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Products dimension
+CREATE TABLE dim_products (
+    product_key INT AUTO_INCREMENT PRIMARY KEY,
+    stock_code VARCHAR(50) UNIQUE NOT NULL,
+    description TEXT,
+    unit_price DECIMAL(10,2),
+    category VARCHAR(100),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_stock_code (stock_code)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Date dimension
+CREATE TABLE dim_date (
+    date_key INT PRIMARY KEY,
+    full_date DATE UNIQUE NOT NULL,
+    year INT NOT NULL,
+    quarter INT NOT NULL,
+    month INT NOT NULL,
+    month_name VARCHAR(20) NOT NULL,
+    day INT NOT NULL,
+    day_of_week INT NOT NULL,
+    day_name VARCHAR(20) NOT NULL,
+    week_of_year INT NOT NULL,
+    is_weekend BOOLEAN NOT NULL,
+    INDEX idx_full_date (full_date),
+    INDEX idx_year_month (year, month)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ============================================================================
+-- FACT TABLES
+-- ============================================================================
+
+-- Customer Behavior fact
+CREATE TABLE fact_customer_behavior (
+    behavior_key INT AUTO_INCREMENT PRIMARY KEY,
+    customer_key INT NOT NULL,
+    date_key INT NOT NULL,
+    total_spend DECIMAL(10,2),
+    items_purchased INT,
+    average_rating DECIMAL(3,2),
+    discount_applied BOOLEAN,
+    days_since_last_purchase INT,
+    satisfaction_level VARCHAR(20),
+    recorded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (customer_key) REFERENCES dim_customers(customer_key),
+    FOREIGN KEY (date_key) REFERENCES dim_date(date_key),
+    INDEX idx_customer_key (customer_key),
+    INDEX idx_date_key (date_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Transactions fact
+CREATE TABLE fact_transactions (
+    transaction_key INT AUTO_INCREMENT PRIMARY KEY,
+    invoice_no VARCHAR(50) NOT NULL,
+    customer_key INT,
+    product_key INT NOT NULL,
+    date_key INT NOT NULL,
+    transaction_date DATETIME NOT NULL,
+    quantity INT NOT NULL,
+    unit_price DECIMAL(10,2) NOT NULL,
+    total_amount DECIMAL(10,2) GENERATED ALWAYS AS (quantity * unit_price) STORED,
+    country VARCHAR(50),
+    FOREIGN KEY (customer_key) REFERENCES dim_customers(customer_key),
+    FOREIGN KEY (product_key) REFERENCES dim_products(product_key),
+    FOREIGN KEY (date_key) REFERENCES dim_date(date_key),
+    INDEX idx_invoice (invoice_no),
+    INDEX idx_customer_key (customer_key),
+    INDEX idx_date_key (date_key)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Economic Indicators fact
+CREATE TABLE fact_economic_indicators (
+    indicator_key INT AUTO_INCREMENT PRIMARY KEY,
+    date_key INT NOT NULL,
+    observation_date DATE NOT NULL UNIQUE,
+    pce_value DECIMAL(10,2) NOT NULL,
+    year INT GENERATED ALWAYS AS (YEAR(observation_date)) STORED,
+    month INT GENERATED ALWAYS AS (MONTH(observation_date)) STORED,
+    FOREIGN KEY (date_key) REFERENCES dim_date(date_key),
+    INDEX idx_date_key (date_key),
+    INDEX idx_year_month (year, month)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ============================================================================
+-- ANALYTICS TABLES
+-- ============================================================================
+
+-- Customer Metrics (aggregated)
+CREATE TABLE customer_metrics (
+    customer_key INT PRIMARY KEY,
+    total_lifetime_value DECIMAL(10,2) DEFAULT 0,
+    total_orders INT DEFAULT 0,
+    avg_order_value DECIMAL(10,2) DEFAULT 0,
+    first_purchase_date DATE,
+    last_purchase_date DATE,
+    recency_days INT,
+    frequency INT DEFAULT 0,
+    monetary DECIMAL(10,2) DEFAULT 0,
+    r_score INT,
+    f_score INT,
+    m_score INT,
+    rfm_score INT,
+    customer_segment VARCHAR(50),
+    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (customer_key) REFERENCES dim_customers(customer_key),
+    INDEX idx_segment (customer_segment)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ============================================================================
+-- POPULATE DATE DIMENSION
+-- ============================================================================
+
+DELIMITER //
+
+CREATE PROCEDURE populate_date_dimension(
+    IN start_date DATE,
+    IN end_date DATE
+)
+BEGIN
+    DECLARE current_date DATE;
+    DECLARE date_key_val INT;
+    
+    SET current_date = start_date;
+    
+    WHILE current_date <= end_date DO
+        SET date_key_val = YEAR(current_date) * 10000 + 
+                          MONTH(current_date) * 100 + 
+                          DAY(current_date);
+        
+        INSERT IGNORE INTO dim_date (
+            date_key, full_date, year, quarter, month, month_name,
+            day, day_of_week, day_name, week_of_year, is_weekend
+        ) VALUES (
+            date_key_val,
+            current_date,
+            YEAR(current_date),
+            QUARTER(current_date),
+            MONTH(current_date),
+            DATE_FORMAT(current_date, '%M'),
+            DAY(current_date),
+            DAYOFWEEK(current_date),
+            DATE_FORMAT(current_date, '%W'),
+            WEEK(current_date, 3),
+            CASE WHEN DAYOFWEEK(current_date) IN (1, 7) THEN TRUE ELSE FALSE END
+        );
+        
+        SET current_date = DATE_ADD(current_date, INTERVAL 1 DAY);
+    END WHILE;
+END//
+
+DELIMITER ;
+
+-- Populate date dimension from 1959 to 2026
+CALL populate_date_dimension('1959-01-01', '2026-12-31');
+
+-- ============================================================================
+-- VERIFICATION
+-- ============================================================================
+
+-- Show created tables
+SHOW TABLES;
+
+-- Show table structures
+DESCRIBE dim_customers;
+DESCRIBE fact_transactions;
+DESCRIBE dim_date;
+
+-- Count records in date dimension
+SELECT COUNT(*) as date_count FROM dim_date;

@@ -1,0 +1,28 @@
+# Database
+mysql-connector-python==8.3.0
+SQLAlchemy==2.0.25
+
+# Data Processing
+pandas==2.2.0
+numpy==1.26.3
+
+# Environment Management
+python-dotenv==1.0.0
+
+# Logging
+loguru==0.7.2
+
+# Testing
+pytest==7.4.4
+pytest-cov==4.1.0
+
+# Data Validation
+great-expectations==0.18.8
+
+# API/Dashboard (optional)
+fastapi==0.109.0
+streamlit==1.31.0
+
+# Visualization
+plotly==5.18.0
+matplotlib==3.8.2
