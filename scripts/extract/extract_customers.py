@@ -1,50 +1,66 @@
 """
 Customer Behavior Data Extraction Script
-Extracts customer behavior data from CSV and prepares for loading
+Enriches customer data with segmentation and quality metrics.
 """
 
 import pandas as pd
 from pathlib import Path
+import logging
+
+# Standard logging configuration
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 def extract_customers(input_file, output_file):
-    """Extract and clean customer behavior data"""
+    """Extract, clean, and add advanced transformations to customer data"""
     
-    # Read the CSV
-    print(f"Reading {input_file}...")
+    print(f"--- Starting Customer Enrichment: {input_file} ---")
+    
+    if not Path(input_file).exists():
+        logging.error(f"Input file not found: {input_file}")
+        return None
+
     df = pd.read_csv(input_file)
-    print(f"Loaded {len(df)} records")
     
-    # Show original columns
-    print(f"\nOriginal columns: {df.columns.tolist()}")
-    
-    # Clean column names
+    # 1. CLEANING: Standardization
     df.columns = df.columns.str.strip().str.lower().str.replace(' ', '_')
-    print(f"Cleaned columns: {df.columns.tolist()}")
     
-    # Convert boolean
-    if 'discount_applied' in df.columns:
-        df['discount_applied'] = df['discount_applied'].astype(str).str.upper() == 'TRUE'
+    # --- TRANSFORMATION 1: Demographic Binning ---
+    # Useful for analyzing which age groups drive the most revenue
+    bins = [0, 18, 30, 50, 70, 120]
+    labels = ['Gen Z/Minor', 'Young Adult', 'Adult', 'Middle Aged', 'Senior']
+    df['age_segment'] = pd.cut(df['age'], bins=bins, labels=labels, right=False)
     
-    # Check for issues
-    print(f"\nData Quality Checks:")
-    print(f"Null values:\n{df.isnull().sum()}")
-    print(f"Duplicates: {df['customer_id'].duplicated().sum()}")
+    # --- TRANSFORMATION 2: Spending Tier (Percentile Based) ---
+    # Instead of just a median flag, we create 3 tiers (Low, Medium, High)
+    if 'total_spend' in df.columns:
+        df['spending_tier'] = pd.qcut(df['total_spend'], q=3, labels=['Low', 'Medium', 'High'])
     
-    # Validate age range
-    invalid_ages = ((df['age'] < 18) | (df['age'] > 100)).sum()
-    if invalid_ages > 0:
-        print(f"Warning: {invalid_ages} records with invalid ages")
+    # --- TRANSFORMATION 3: Engagement Score ---
+    # Creating a synthetic feature combining rating and discount usage
+    if 'average_rating' in df.columns and 'discount_applied' in df.columns:
+        # Convert boolean to 1/0
+        discount_val = (df['discount_applied'].astype(str).str.upper() == 'TRUE').astype(int)
+        # Score = Rating (1-5) + 2 points if they use discounts
+        df['engagement_score'] = df['average_rating'] + (discount_val * 2)
     
-    # Save cleaned data
+    # --- TRANSFORMATION 4: Data Quality Flag ---
+    # Identify records that have missing critical info for downstream models
+    critical_cols = ['age', 'total_spend', 'membership_type']
+    df['is_valid_record'] = df[critical_cols].notnull().all(axis=1)
+    
+    # 2. VALIDATION SUMMARY
+    valid_pct = (df['is_valid_record'].sum() / len(df)) * 100
+    print(f"Data Quality Check: {valid_pct:.1f}% of records are complete.")
+    
+    # 3. SAVE: Save enriched data
+    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
     df.to_csv(output_file, index=False)
-    print(f"\n✓ Saved to {output_file}")
     
-    # Show summary
-    print(f"\nSummary Statistics:")
-    print(f"Total customers: {len(df)}")
-    print(f"Average age: {df['age'].mean():.1f}")
-    print(f"Average spend: ${df['total_spend'].mean():.2f}")
-    print(f"Average rating: {df['average_rating'].mean():.2f}")
+    print(f"--- SUCCESS: {len(df)} records enriched and saved to {output_file} ---")
+    
+    # Quick Analytics for your report
+    print("\nSummary of New Features:")
+    print(df[['age_segment', 'spending_tier']].value_counts().head(5))
     
     return df
 
@@ -52,8 +68,7 @@ if __name__ == "__main__":
     input_file = 'data/raw/E-commerce_Customer_Behavior_-_Sheet1.csv'
     output_file = 'data/processed/customers_clean.csv'
     
-    # Create output directory if needed
-    Path(output_file).parent.mkdir(parents=True, exist_ok=True)
-    
-    df = extract_customers(input_file, output_file)
-    print("\n✓ Customer extraction complete!")
+    try:
+        extract_customers(input_file, output_file)
+    except Exception as e:
+        logging.error(f"Extraction failed: {e}")

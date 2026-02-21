@@ -1,72 +1,52 @@
-"""
-Load customer data into MySQL database
-"""
-
-import sys
-from pathlib import Path
-
-# Ensure project root is on sys.path
-_project_root = str(Path(__file__).resolve().parent.parent.parent)
-if _project_root not in sys.path:
-    sys.path.insert(0, _project_root)
-
 import pandas as pd
+import logging
 from utils.connections import get_mysql_connection
 
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 
 def load_customers():
-    """Load customer data into dim_customers table"""
-
-    # Read cleaned data
-    print("Reading cleaned customer data...")
+    # Read the enriched CSV from the processed folder
     df = pd.read_csv('data/processed/customers_clean.csv')
-    print(f"Loaded {len(df)} records")
-
-    # Connect to database
-    print("Connecting to database...")
+    
     conn = get_mysql_connection()
     cursor = conn.cursor()
 
-    # Insert data
+    # SQL query updated with new columns
     insert_query = """
-    INSERT INTO dim_customers (customer_id, gender, age, city, membership_type)
-    VALUES (%s, %s, %s, %s, %s)
+    INSERT INTO dim_customers 
+    (customer_id, gender, age, age_segment, city, membership_type, spending_tier, engagement_score, is_valid_record)
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
     ON DUPLICATE KEY UPDATE
-        gender = VALUES(gender),
-        age = VALUES(age),
-        city = VALUES(city),
-        membership_type = VALUES(membership_type)
+        age_segment = VALUES(age_segment),
+        spending_tier = VALUES(spending_tier),
+        engagement_score = VALUES(engagement_score),
+        is_valid_record = VALUES(is_valid_record)
     """
 
-    records_inserted = 0
+    # Prepare data for batch insertion
+    data = []
     for _, row in df.iterrows():
-        cursor.execute(insert_query, (
+        data.append((
             int(row['customer_id']),
             row['gender'],
             int(row['age']),
+            row['age_segment'],
             row['city'],
-            row['membership_type']
+            row['membership_type'],
+            row['spending_tier'],
+            float(row['engagement_score']),
+            bool(row['is_valid_record'])
         ))
-        records_inserted += 1
-        if records_inserted % 50 == 0:
-            print(f"Inserted {records_inserted} records...")
 
-    conn.commit()
-    print(f"\n✓ Successfully loaded {records_inserted} customers")
-
-    # Verify
-    cursor.execute("SELECT COUNT(*) FROM dim_customers")
-    count = cursor.fetchone()[0]
-    print(f"Total customers in database: {count}")
-
-    # Show sample
-    print("\nSample data:")
-    cursor.execute("SELECT * FROM dim_customers LIMIT 5")
-    for row in cursor.fetchall():
-        print(f"  Customer {row[1]}: {row[2]}, {row[3]} years old, {row[4]}")
-
-    cursor.close()
-    conn.close()
+    try:
+        cursor.executemany(insert_query, data)
+        conn.commit()
+        logging.info(f"Successfully loaded {cursor.rowcount} customers (including updates).")
+    except Exception as e:
+        logging.error(f"Error loading customers: {e}")
+    finally:
+        cursor.close()
+        conn.close()
 
 if __name__ == "__main__":
     load_customers()
