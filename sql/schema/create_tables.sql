@@ -110,7 +110,7 @@ CREATE TABLE fact_economic_indicators (
 -- MONITORING & ANALYTICS
 -- ============================================================================
 
--- NEW: Pipeline Logs for Monitoring Requirement
+-- Pipeline Logs for Monitoring Requirement
 CREATE TABLE pipeline_logs (
     log_id INT AUTO_INCREMENT PRIMARY KEY,
     job_name VARCHAR(100) NOT NULL,
@@ -120,7 +120,7 @@ CREATE TABLE pipeline_logs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- NEW: Practical Output View (Spend vs Economy Trend)
+-- Practical Output View (Spend vs Economy Trend)
 CREATE OR REPLACE VIEW view_spending_trends AS
 SELECT 
     d.year,
